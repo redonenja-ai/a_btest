@@ -116,13 +116,6 @@ st.markdown("""
         text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         animation: none;
     }
-    .spin-wheel.spinning {
-        animation: spin 0.5s linear infinite;
-    }
-    @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-    }
     .progress-bar {
         height: 20px;
         border-radius: 10px;
@@ -144,37 +137,114 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Constants and helpers
+FIRST_NAMES = [
+    "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Quinn", "Avery",
+    "Sam", "Jamie", "Drew", "Cameron", "Reese", "Parker", "Sage", "Dakota"
+]
+LAST_NAMES = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
+    "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez"
+]
+PREFERENCES = ["Visual", "Practical", "Innovative", "Traditional", "Bold", "Subtle"]
+
+def ensure_session_state():
+    defaults = {
+        'title_a': "Option A",
+        'title_b': "Option B",
+        'appeal_a': 50,
+        'appeal_b': 50,
+        'image_a': None,
+        'image_b': None,
+        'human_votes_a': 0,
+        'human_votes_b': 0,
+        'ai_votes_a': 0,
+        'ai_votes_b': 0,
+        'total_points': 0,
+        'last_spin': "-",
+        'persona_count': 50,
+        'persona_results': [],
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+def render_option_card(prefix, heading):
+    st.markdown('<div class="option-card">', unsafe_allow_html=True)
+    st.markdown(f"### {heading}")
+    title_key = f"title_{prefix}"
+    st.session_state[title_key] = st.text_input(
+        "Title",
+        value=st.session_state[title_key],
+        key=f"{title_key}_input"
+    )
+
+    uploader_key = f"uploader_{prefix}"
+    uploaded = st.file_uploader(
+        "Upload Image",
+        type=['png', 'jpg', 'jpeg'],
+        key=uploader_key
+    )
+    if uploaded:
+        st.session_state[f"image_{prefix}"] = Image.open(uploaded)
+
+    existing_image = st.session_state[f"image_{prefix}"]
+    if existing_image is not None:
+        st.image(existing_image, use_container_width=True)
+
+    appeal_key = f"appeal_{prefix}"
+    st.session_state[appeal_key] = st.slider(
+        "AI Appeal Score",
+        0,
+        100,
+        st.session_state[appeal_key],
+        key=f"{appeal_key}_slider"
+    )
+    st.caption("Used by AI persona simulation to influence voting")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def render_stats_card(value, caption, percentage=None, color=None):
+    style = f"color: {color};" if color else ""
+    st.markdown('<div class="stats-box">', unsafe_allow_html=True)
+    st.markdown(f"<div class='stats-number' style='{style}'>{value}</div>", unsafe_allow_html=True)
+    st.caption(caption)
+    if percentage is not None:
+        safe_pct = max(0.0, min(percentage / 100, 1.0))
+        st.progress(safe_pct)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def simulate_personas(count, appeal_a, appeal_b, title_a, title_b):
+    personas = []
+    votes_a = 0
+    votes_b = 0
+    total_appeal = appeal_a + appeal_b
+    base_prob_a = 0.5 if total_appeal == 0 else appeal_a / total_appeal
+
+    for _ in range(count):
+        name = f"{random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
+        pref = random.choice(PREFERENCES)
+        prob_a = base_prob_a + random.uniform(-0.1, 0.1)
+        prob_a = max(0.1, min(0.9, prob_a))
+        voted_a = random.random() < prob_a
+
+        if voted_a:
+            votes_a += 1
+            vote_label = title_a
+        else:
+            votes_b += 1
+            vote_label = title_b
+
+        personas.append({
+            "name": name,
+            "preference": pref,
+            "vote": vote_label,
+            "confidence": random.randint(60, 98)
+        })
+
+    return personas, votes_a, votes_b
+
 # Initialize session state
-if 'title_a' not in st.session_state:
-    st.session_state.title_a = "Option A"
-if 'title_b' not in st.session_state:
-    st.session_state.title_b = "Option B"
-if 'appeal_a' not in st.session_state:
-    st.session_state.appeal_a = 50
-if 'appeal_b' not in st.session_state:
-    st.session_state.appeal_b = 50
-if 'image_a' not in st.session_state:
-    st.session_state.image_a = None
-if 'image_b' not in st.session_state:
-    st.session_state.image_b = None
-if 'human_votes_a' not in st.session_state:
-    st.session_state.human_votes_a = 0
-if 'human_votes_b' not in st.session_state:
-    st.session_state.human_votes_b = 0
-if 'ai_votes_a' not in st.session_state:
-    st.session_state.ai_votes_a = 0
-if 'ai_votes_b' not in st.session_state:
-    st.session_state.ai_votes_b = 0
-if 'total_points' not in st.session_state:
-    st.session_state.total_points = 0
-if 'last_spin' not in st.session_state:
-    st.session_state.last_spin = "-"
-if 'spinning' not in st.session_state:
-    st.session_state.spinning = False
-if 'persona_count' not in st.session_state:
-    st.session_state.persona_count = 50
-if 'persona_results' not in st.session_state:
-    st.session_state.persona_results = []
+ensure_session_state()
 
 # Header
 st.markdown("""
@@ -191,28 +261,10 @@ st.subheader("1️⃣ Set Up A vs B")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown('<div class="option-card">', unsafe_allow_html=True)
-    st.markdown("### 🅰️ Option A")
-    st.session_state.title_a = st.text_input("Title", value=st.session_state.title_a, key="title_a_input")
-    uploaded_a = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'], key="uploader_a")
-    if uploaded_a:
-        st.session_state.image_a = Image.open(uploaded_a)
-        st.image(st.session_state.image_a, use_container_width=True)
-    st.session_state.appeal_a = st.slider("AI Appeal Score", 0, 100, st.session_state.appeal_a, key="appeal_a_slider")
-    st.caption("Used by AI persona simulation to influence voting")
-    st.markdown('</div>', unsafe_allow_html=True)
+    render_option_card("a", "🅰️ Option A")
 
 with col2:
-    st.markdown('<div class="option-card">', unsafe_allow_html=True)
-    st.markdown("### 🅱️ Option B")
-    st.session_state.title_b = st.text_input("Title", value=st.session_state.title_b, key="title_b_input")
-    uploaded_b = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'], key="uploader_b")
-    if uploaded_b:
-        st.session_state.image_b = Image.open(uploaded_b)
-        st.image(st.session_state.image_b, use_container_width=True)
-    st.session_state.appeal_b = st.slider("AI Appeal Score", 0, 100, st.session_state.appeal_b, key="appeal_b_slider")
-    st.caption("Used by AI persona simulation to influence voting")
-    st.markdown('</div>', unsafe_allow_html=True)
+    render_option_card("b", "🅱️ Option B")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
